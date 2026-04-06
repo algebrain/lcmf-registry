@@ -1,0 +1,238 @@
+# Интерфейс `lcmf-registry`
+
+Этот документ описывает публичный интерфейс библиотеки
+[`lcmf-registry`](https://github.com/algebrain/lcmf-registry).
+
+Библиотека реализует read-provider registry для
+[`LCMF`](https://github.com/algebrain/lcmf-docs).
+
+## Назначение
+
+`lcmf-registry` дает:
+
+- регистрацию публичных read providers;
+- декларацию обязательных внешних read-зависимостей;
+- проверку корректности wiring;
+- fail-fast assertion на старте приложения.
+
+Библиотека не:
+
+- заменяет `bus`;
+- координирует side effects;
+- предназначена для каскадных provider -> provider вызовов.
+
+## `make-registry`
+
+Создает in-memory registry.
+
+Общая форма:
+
+```clojure
+(make-registry)
+```
+
+Пример:
+
+```clojure
+(ns my.app
+  (:require [lcmf.registry :as registry]))
+
+(def app-registry
+  (registry/make-registry))
+```
+
+## `register-provider!`
+
+Регистрирует публичный provider.
+
+Общая форма:
+
+```clojure
+(register-provider! registry
+  {:provider-id ...
+   :module ...
+   :provider-fn ...
+   :meta ...})
+```
+
+Обязательные поля:
+
+- `:provider-id` — keyword
+- `:module` — keyword
+- `:provider-fn` — function
+
+Optional:
+
+- `:meta` — map
+
+Пример:
+
+```clojure
+(registry/register-provider!
+ app-registry
+ {:provider-id :accounts/get-by-id
+  :module :accounts
+  :provider-fn (fn [{:keys [user-id]}]
+                 (when-let [user (get-in @accounts-state [:users user-id])]
+                   {:id (:id user)
+                    :login (:login user)
+                    :role (:role user)}))
+  :meta {:version "1.0"}})
+```
+
+Поведение:
+
+- при duplicate `provider-id` бросает `ex-info` с `:reason :duplicate-provider`
+- при невалидных аргументах бросает `ex-info` с `:reason :invalid-argument`
+
+## `resolve-provider`
+
+Возвращает provider function или `nil`, если provider отсутствует.
+
+Общая форма:
+
+```clojure
+(resolve-provider registry provider-id)
+```
+
+Пример:
+
+```clojure
+(if-let [get-user (registry/resolve-provider app-registry :accounts/get-by-id)]
+  (get-user {:user-id "u-alice"})
+  nil)
+```
+
+## `require-provider`
+
+Возвращает provider function или бросает исключение, если provider отсутствует.
+
+Общая форма:
+
+```clojure
+(require-provider registry provider-id)
+```
+
+Пример:
+
+```clojure
+(let [get-user (registry/require-provider app-registry :accounts/get-by-id)]
+  (get-user {:user-id "u-alice"}))
+```
+
+Поведение:
+
+- при отсутствии provider бросает `ex-info` с `:reason :missing-provider`
+
+## `declare-requirements!`
+
+Объявляет обязательные provider-зависимости модуля.
+
+Общая форма:
+
+```clojure
+(declare-requirements! registry module required-provider-ids)
+```
+
+Где:
+
+- `module` — keyword
+- `required-provider-ids` — set of keywords
+
+Пример:
+
+```clojure
+(registry/declare-requirements!
+ app-registry
+ :booking
+ #{:accounts/get-by-id
+   :catalog/get-slot-by-id})
+```
+
+Поведение:
+
+- repeated declarations для того же модуля merge-ятся
+
+## `validate-requirements`
+
+Проверяет, закрыты ли все declared requirements зарегистрированными providers.
+
+Общая форма:
+
+```clojure
+(validate-requirements registry)
+```
+
+Возвращает:
+
+```clojure
+{:ok? true}
+```
+
+или
+
+```clojure
+{:ok? false
+ :missing {:booking #{:accounts/get-by-id}}}
+```
+
+Пример:
+
+```clojure
+(registry/validate-requirements app-registry)
+```
+
+## `assert-requirements!`
+
+Выполняет fail-fast проверку на старте приложения.
+
+Общая форма:
+
+```clojure
+(assert-requirements! registry)
+```
+
+Пример:
+
+```clojure
+(registry/assert-requirements! app-registry)
+```
+
+Поведение:
+
+- при незакрытых зависимостях бросает `ex-info` с
+  `:reason :missing-required-providers`
+
+## Минимальный walkthrough
+
+```clojure
+(ns my.app
+  (:require [lcmf.registry :as registry]))
+
+(def app-registry
+  (registry/make-registry))
+
+;; accounts
+(registry/register-provider!
+ app-registry
+ {:provider-id :accounts/get-by-id
+  :module :accounts
+  :provider-fn (fn [{:keys [user-id]}]
+                 (when-let [user (get-in @accounts-state [:users user-id])]
+                   {:id (:id user)
+                    :login (:login user)
+                    :role (:role user)}))})
+
+;; booking
+(registry/declare-requirements!
+ app-registry
+ :booking
+ #{:accounts/get-by-id})
+
+;; app startup
+(registry/assert-requirements! app-registry)
+
+;; consumer module code
+(let [get-user (registry/require-provider app-registry :accounts/get-by-id)]
+  (get-user {:user-id "u-alice"}))
+```
