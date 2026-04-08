@@ -18,3 +18,13 @@ Public API:
 - `declare-requirements!`
 - `validate-requirements`
 - `assert-requirements!`
+
+Local verification:
+
+- `bb test.bb`
+- `clojure -M:test`
+- `clojure -M:test-watch`
+- `clojure -M:lint`
+- `clojure -M:format`
+
+Tests run on `cljs/node` via `shadow-cljs`.

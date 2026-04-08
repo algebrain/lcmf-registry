@@ -21,6 +21,21 @@
 - координирует side effects;
 - предназначена для каскадных provider -> provider вызовов.
 
+## Локальная проверка
+
+Основной локальный вход в контур проверки:
+
+```bash
+bb test.bb
+```
+
+Отдельные команды:
+
+- `clojure -M:test` — `cljs/node` тесты через `shadow-cljs`
+- `clojure -M:test-watch` — watch-режим для локальной разработки
+- `clojure -M:lint` — `clj-kondo`
+- `clojure -M:format` — `cljfmt`
+
 ## `make-registry`
 
 Создает in-memory registry.

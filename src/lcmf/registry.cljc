@@ -8,8 +8,8 @@
 
 (defn- ensure-registry! [registry]
   (when-not
-      #?(:clj  (instance? clojure.lang.IAtom registry)
-         :cljs (satisfies? IAtom registry))
+   #?(:clj  (instance? clojure.lang.IAtom registry)
+      :cljs (satisfies? IAtom registry))
     (throw (ex-info "registry must be an atom"
                     {:reason :invalid-registry
                      :registry registry})))
