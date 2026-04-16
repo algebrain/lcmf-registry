@@ -55,7 +55,10 @@
                                       :payments/get-method})
     (is (= {:ok? false
             :missing {:orders #{:users/get-user-by-id
-                                :payments/get-method}}}
+                                :payments/get-method}}
+            :registered-provider-ids #{}
+            :declared-requirements {:orders #{:users/get-user-by-id
+                                              :payments/get-method}}}
            (registry/validate-requirements reg)))
     (registry/register-provider! reg
                                  {:provider-id :users/get-user-by-id
@@ -65,7 +68,13 @@
                                  {:provider-id :payments/get-method
                                   :module :payments
                                   :provider-fn identity})
-    (is (= {:ok? true} (registry/validate-requirements reg)))
+    (is (= {:ok? true
+            :missing {}
+            :registered-provider-ids #{:users/get-user-by-id
+                                       :payments/get-method}
+            :declared-requirements {:orders #{:users/get-user-by-id
+                                              :payments/get-method}}}
+           (registry/validate-requirements reg)))
     (is (true? (registry/assert-requirements! reg)))))
 
 (deftest assert-requirements-fail-fast-test
@@ -83,7 +92,10 @@
     (registry/declare-requirements! reg :orders #{:payments/get-method})
     (is (= {:ok? false
             :missing {:orders #{:users/get-user-by-id
-                                :payments/get-method}}}
+                                :payments/get-method}}
+            :registered-provider-ids #{}
+            :declared-requirements {:orders #{:users/get-user-by-id
+                                              :payments/get-method}}}
            (registry/validate-requirements reg)))))
 
 (deftest invalid-arguments-test
@@ -95,20 +107,66 @@
                                                              :provider-fn identity}))]
         (is (some? data))
         (is (= :invalid-argument (:reason data)))))
+    (testing "extra keys in provider spec are rejected"
+      (let [data (thrown-data #(registry/register-provider! reg
+                                                            {:provider-id :users/get-user-by-id
+                                                             :module :users
+                                                             :provider-fn identity
+                                                             :unknown true}))]
+        (is (some? data))
+        (is (= :invalid-argument (:reason data)))
+        (is (= :provider-spec (:field data)))))
     (testing "invalid requirements set"
       (let [data (thrown-data #(registry/declare-requirements!
                                 reg
                                 :orders
                                 [:users/get-user-by-id]))]
         (is (some? data))
-        (is (= :invalid-argument (:reason data)))))))
+        (is (= :invalid-argument (:reason data)))))
+    (testing "requirements set with non-keywords is rejected"
+      (let [data (thrown-data #(registry/declare-requirements!
+                                reg
+                                :orders
+                                #{"users/get-user-by-id"}))]
+        (is (some? data))
+        (is (= :invalid-argument (:reason data)))))
+    (testing "resolve-provider validates provider-id"
+      (let [data (thrown-data #(registry/resolve-provider reg "users/get-user-by-id"))]
+        (is (some? data))
+        (is (= :invalid-argument (:reason data)))
+        (is (= :provider-id (:field data)))))
+    (testing "require-provider validates provider-id"
+      (let [data (thrown-data #(registry/require-provider reg "users/get-user-by-id"))]
+        (is (some? data))
+        (is (= :invalid-argument (:reason data)))
+        (is (= :provider-id (:field data)))))))
 
 (deftest cljs-registry-shape-test
   (let [reg (registry/make-registry)]
     (is (satisfies? IAtom reg))
     (is (= {:providers {}
-            :requirements {}}
+            :requirements {}
+            :sealed? false}
            @reg))
     (let [data (thrown-data #(registry/resolve-provider {} :users/get-user-by-id))]
       (is (some? data))
       (is (= :invalid-registry (:reason data))))))
+
+(deftest registry-is-sealed-after-successful-assert-test
+  (let [reg (registry/make-registry)]
+    (registry/declare-requirements! reg :orders #{:users/get-user-by-id})
+    (registry/register-provider! reg
+                                 {:provider-id :users/get-user-by-id
+                                  :module :users
+                                  :provider-fn identity})
+    (is (true? (registry/assert-requirements! reg)))
+    (is (true? (:sealed? @reg)))
+    (let [register-data (thrown-data #(registry/register-provider! reg
+                                                                   {:provider-id :payments/get-method
+                                                                    :module :payments
+                                                                    :provider-fn identity}))
+          declare-data (thrown-data #(registry/declare-requirements! reg
+                                                                     :booking
+                                                                     #{:payments/get-method}))]
+      (is (= :registry-sealed (:reason register-data)))
+      (is (= :registry-sealed (:reason declare-data))))))

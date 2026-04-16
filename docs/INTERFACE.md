@@ -13,7 +13,8 @@
 - регистрацию публичных read providers;
 - декларацию обязательных внешних read-зависимостей;
 - проверку корректности wiring;
-- fail-fast assertion на старте приложения.
+- fail-fast проверку на старте приложения;
+- sealing после успешной стартовой проверки.
 
 Библиотека не:
 
@@ -56,6 +57,14 @@ bb test.bb
   (registry/make-registry))
 ```
 
+Начальное состояние registry:
+
+```clojure
+{:providers {}
+ :requirements {}
+ :sealed? false}
+```
+
 ## `register-provider!`
 
 Регистрирует публичный provider.
@@ -80,6 +89,12 @@ Optional:
 
 - `:meta` — map
 
+Важно:
+
+- лишние ключи в provider spec не допускаются;
+- после успешного `assert-requirements!` registry запечатывается, и новые
+  provider-ы регистрировать уже нельзя.
+
 Пример:
 
 ```clojure
@@ -99,6 +114,7 @@ Optional:
 
 - при duplicate `provider-id` бросает `ex-info` с `:reason :duplicate-provider`
 - при невалидных аргументах бросает `ex-info` с `:reason :invalid-argument`
+- после sealing бросает `ex-info` с `:reason :registry-sealed`
 
 ## `resolve-provider`
 
@@ -167,6 +183,7 @@ Optional:
 Поведение:
 
 - repeated declarations для того же модуля merge-ятся
+- после sealing бросает `ex-info` с `:reason :registry-sealed`
 
 ## `validate-requirements`
 
@@ -181,14 +198,19 @@ Optional:
 Возвращает:
 
 ```clojure
-{:ok? true}
+{:ok? true
+ :missing {}
+ :registered-provider-ids #{:accounts/get-by-id}
+ :declared-requirements {:booking #{:accounts/get-by-id}}}
 ```
 
 или
 
 ```clojure
 {:ok? false
- :missing {:booking #{:accounts/get-by-id}}}
+ :missing {:booking #{:accounts/get-by-id}}
+ :registered-provider-ids #{}
+ :declared-requirements {:booking #{:accounts/get-by-id}}}
 ```
 
 Пример:
@@ -217,6 +239,7 @@ Optional:
 
 - при незакрытых зависимостях бросает `ex-info` с
   `:reason :missing-required-providers`
+- при успешной проверке запечатывает registry, выставляя `:sealed? true`
 
 ## Минимальный walkthrough
 

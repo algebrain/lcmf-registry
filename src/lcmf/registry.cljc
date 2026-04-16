@@ -1,10 +1,17 @@
 (ns lcmf.registry
   (:require [clojure.set :as set]))
 
+(def ^:private provider-spec-required-keys
+  #{:provider-id :module :provider-fn})
+
+(def ^:private provider-spec-allowed-keys
+  #{:provider-id :module :provider-fn :meta})
+
 (defn make-registry
   []
   (atom {:providers {}
-         :requirements {}}))
+         :requirements {}
+         :sealed? false}))
 
 (defn- ensure-registry! [registry]
   (when-not
@@ -29,29 +36,57 @@
                      :field field
                      :value value}))))
 
-(defn register-provider!
-  [registry {:keys [provider-id module provider-fn meta]}]
-  (ensure-registry! registry)
-  (ensure-keyword! provider-id :provider-id)
-  (ensure-keyword! module :module)
-  (ensure-fn! provider-fn :provider-fn)
-  (when (and (some? meta) (not (map? meta)))
-    (throw (ex-info "meta must be map"
+(defn- ensure-open-registry! [registry]
+  (when (:sealed? @registry)
+    (throw (ex-info "registry is sealed"
+                    {:reason :registry-sealed}))))
+
+(defn- ensure-provider-spec! [provider-spec]
+  (when-not (map? provider-spec)
+    (throw (ex-info "provider spec must be map"
                     {:reason :invalid-argument
-                     :field :meta
-                     :value meta})))
-  (swap! registry
-         (fn [state]
-           (when (contains? (:providers state) provider-id)
-             (throw (ex-info "provider already registered"
-                             {:reason :duplicate-provider
-                              :provider-id provider-id
-                              :existing-module (get-in state [:providers provider-id :module])
-                              :module module})))
-           (assoc-in state [:providers provider-id]
-                     {:fn provider-fn
-                      :module module
-                      :meta (or meta {})})))
+                     :field :provider-spec
+                     :value provider-spec})))
+  (let [provider-spec-keys (set (keys provider-spec))]
+    (when-not (set/subset? provider-spec-required-keys provider-spec-keys)
+      (throw (ex-info "provider spec must contain provider-id, module and provider-fn"
+                      {:reason :invalid-argument
+                       :field :provider-spec
+                       :value provider-spec
+                       :required-keys provider-spec-required-keys})))
+    (when-not (set/subset? provider-spec-keys provider-spec-allowed-keys)
+      (throw (ex-info "provider spec must contain only provider-id, module, provider-fn and optional meta"
+                      {:reason :invalid-argument
+                       :field :provider-spec
+                       :value provider-spec
+                       :allowed-keys provider-spec-allowed-keys})))))
+
+(defn register-provider!
+  [registry provider-spec]
+  (ensure-registry! registry)
+  (ensure-open-registry! registry)
+  (ensure-provider-spec! provider-spec)
+  (let [{:keys [provider-id module provider-fn meta]} provider-spec]
+    (ensure-keyword! provider-id :provider-id)
+    (ensure-keyword! module :module)
+    (ensure-fn! provider-fn :provider-fn)
+    (when (and (some? meta) (not (map? meta)))
+      (throw (ex-info "meta must be map"
+                      {:reason :invalid-argument
+                       :field :meta
+                       :value meta})))
+    (swap! registry
+           (fn [state]
+             (when (contains? (:providers state) provider-id)
+               (throw (ex-info "provider already registered"
+                               {:reason :duplicate-provider
+                                :provider-id provider-id
+                                :existing-module (get-in state [:providers provider-id :module])
+                                :module module})))
+             (assoc-in state [:providers provider-id]
+                       {:fn provider-fn
+                        :module module
+                        :meta (or meta {})}))))
   true)
 
 (defn resolve-provider
@@ -70,6 +105,7 @@
 (defn declare-requirements!
   [registry module required-provider-ids]
   (ensure-registry! registry)
+  (ensure-open-registry! registry)
   (ensure-keyword! module :module)
   (when-not (set? required-provider-ids)
     (throw (ex-info "required-provider-ids must be set"
@@ -98,15 +134,17 @@
                                  (assoc acc module diff))))
                            {}
                            requirements)]
-    (if (empty? missing)
-      {:ok? true}
-      {:ok? false
-       :missing missing})))
+    {:ok? (empty? missing)
+     :missing missing
+     :registered-provider-ids provider-ids
+     :declared-requirements requirements}))
 
 (defn assert-requirements!
   [registry]
+  (ensure-registry! registry)
   (let [result (validate-requirements registry)]
     (when-not (:ok? result)
       (throw (ex-info "missing required read providers"
                       (assoc result :reason :missing-required-providers))))
+    (swap! registry assoc :sealed? true)
     true))
